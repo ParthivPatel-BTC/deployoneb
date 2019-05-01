@@ -1,0 +1,10 @@
+# For development environment
+development:
+  adapter: postgresql
+  encoding: unicode
+  database: deployoneb
+  host: localhost
+  pool: 5
+  username: postgres
+  password: postgres
+  port: 5432
