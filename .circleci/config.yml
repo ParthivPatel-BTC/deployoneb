@@ -1,75 +1,79 @@
 version: 2
 jobs:
   build:
-    parallelism: 3
+    working_directory: ~/ParthivPatel-BTC/deployoneb
+    parallelism: 2
+    shell: /bin/bash --login
+
+    # CircleCI 2.0 does not support environment variables that refer to each other the same way as 1.0 did.
+    # If any of these refer to each other, rewrite them so that they don't or see https://circleci.com/docs/2.0/env-vars/#interpolating-environment-variables-to-set-other-environment-variables .
+    environment:
+      CIRCLE_ARTIFACTS: /tmp/circleci-artifacts
+      CIRCLE_TEST_REPORTS: /tmp/circleci-test-results
+
+    # To see the list of pre-built images that CircleCI provides for most common languages see
+    # https://circleci.com/docs/2.0/circleci-images/
     docker:
-      - image: circleci/ruby:2.4.2-jessie-node
-        environment:
-          BUNDLE_JOBS: 3
-          BUNDLE_RETRY: 3
-          BUNDLE_PATH: vendor/bundle
-          PGHOST: 127.0.0.1
-          PGUSER: circleci-demo-ruby
-          RAILS_ENV: test
-      - image: circleci/postgres:9.2.23-alpine
-        environment:
-          POSTGRES_USER: circleci-demo-ruby
-          POSTGRES_DB: rails_blog
-          POSTGRES_PASSWORD: ""
+    - image: circleci/build-image:ubuntu-14.04-XXL-upstart-1189-5614f37
+      command: /sbin/init
+
     steps:
-      - checkout
+    # The following `checkout` command checks out your code to your working directory. In 1.0 we did this implicitly. In 2.0 you can choose where in the course of a job your code should be checked out.
+    - checkout
 
-      # Which version of bundler?
-      - run:
-          name: Which bundler?
-          command: bundle -v
+    # Prepare for artifact and test results  collection equivalent to how it was done on 1.0.
+    # In many cases you can simplify this from what is generated here.
+    # 'See docs on artifact collection here https://circleci.com/docs/2.0/artifacts/'
+    - run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_TEST_REPORTS
 
-      # Restore bundle cache
-      - restore_cache:
-          keys:
-            - rails-demo-bundle-v2-{{ checksum "Gemfile.lock" }}
-            - rails-demo-bundle-v2-
+    # Restore the dependency cache
+    - restore_cache:
+        keys:
+        # This branch if available
+        - v1-dep-{{ .Branch }}-
+        # Default branch if not
+        - v1-dep-master-
+        # Any branch if there are none on the default branch - this should be unnecessary if you have your default branch configured correctly
+        - v1-dep-
 
-      - run:
-          name: Bundle Install
-          command: bundle check || bundle install
+    # Install bunlder and set RAILS_ENV and RACK_ENV to test enviorment
+    - run: 'gem install bundler -v 2.0.1'
+    - run: echo -e "export RAILS_ENV=test\nexport RACK_ENV=test" >> $BASH_ENV
+    - run: 'bundle check --path=vendor/bundle || bundle install --path=vendor/bundle'
 
-      # Store bundle cache
-      - save_cache:
-          key: rails-demo-bundle-v2-{{ checksum "Gemfile.lock" }}
-          paths:
-            - vendor/bundle
+    # Save dependency cache
+    - save_cache:
+        key: v1-dep-{{ .Branch }}-{{ epoch }}
+        paths:
+        # This is a broad list of cache paths to include many possible development environments
+        # You can probably delete some of these entries
+        - vendor/bundle
+        - ~/virtualenvs
+        - ~/.m2
+        - ~/.ivy2
+        - ~/.bundle
+        - ~/.go_workspace
+        - ~/.gradle
+        - ~/.cache/bower
 
-      # Only necessary if app uses webpacker or yarn in some other way
-      - restore_cache:
-          keys:
-            - rails-demo-yarn-{{ checksum "yarn.lock" }}
-            - rails-demo-yarn-
+    # Create and migrate
+    - run:
+        name: 'Create and migrate database'
+        command: |
+          bundle exec rake db:create
+          bundle exec rake db:migrate
 
-      - run:
-          name: Yarn Install
-          command: yarn install --cache-folder ~/.cache/yarn
+    - run:
+        name: 'Run the rspecs'
+        command: |
+          bundle exec rspec --color --require spec_helper --format progress $(circleci tests glob spec/**/*_spec.rb | circleci tests split)
 
-      # Store yarn / webpacker cache
-      - save_cache:
-          key: rails-demo-yarn-{{ checksum "yarn.lock" }}
-          paths:
-            - ~/.cache/yarn
+    # Save test results
+    - store_test_results:
+        path: /tmp/circleci-test-results
 
-      - run:
-          name: Wait for DB
-          command: dockerize -wait tcp://localhost:5432 -timeout 1m
-
-      - run:
-          name: Database setup
-          command: bin/rails db:schema:load --trace
-
-      # Run rspec in parallel
-      - run:
-          name: Run rspec in parallel
-          command: |
-            bundle exec rspec --profile 10 \
-                              --format RspecJunitFormatter \
-                              --out test_results/rspec.xml \
-                              --format progress \
-                              $(circleci tests glob "spec/**/*_spec.rb" | circleci tests split --split-by=timings)
+    # Save artifacts
+    - store_artifacts:
+        path: /tmp/circleci-artifacts
+    - store_artifacts:
+        path: /tmp/circleci-test-results
